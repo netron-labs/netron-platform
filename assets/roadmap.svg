@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470">
+  <rect width="1200" height="470" fill="#0b1020"/>
+  <text x="70" y="85" fill="#f8fafc" font-family="Arial, sans-serif" font-size="40" font-weight="700">NETRON LABS YOL HARİTASI</text>
+  <text x="70" y="122" fill="#94a3b8" font-family="Arial, sans-serif" font-size="18">Ürün, altyapı ve araştırma çalışmalarının açık görünümü</text>
+  <line x1="160" y1="250" x2="1040" y2="250" stroke="#475569" stroke-width="4"/>
+  <circle cx="230" cy="250" r="16" fill="#2dd4bf"/>
+  <circle cx="600" cy="250" r="16" fill="#a78bfa"/>
+  <circle cx="970" cy="250" r="16" fill="#60a5fa"/>
+  <g font-family="Arial, sans-serif">
+    <text x="150" y="205" fill="#ffffff" font-size="28" font-weight="700">Şimdi</text>
+    <text x="115" y="310" fill="#cbd5e1" font-size="18">Netron AI deneyimi</text>
+    <text x="115" y="340" fill="#cbd5e1" font-size="18">Nethost teslim akışı</text>
+    <text x="495" y="205" fill="#ffffff" font-size="28" font-weight="700">Sonraki</text>
+    <text x="455" y="310" fill="#cbd5e1" font-size="18">ProTok araştırması</text>
+    <text x="455" y="340" fill="#cbd5e1" font-size="18">Üyelik altyapısı</text>
+    <text x="900" y="205" fill="#ffffff" font-size="28" font-weight="700">Gelecek</text>
+    <text x="860" y="310" fill="#cbd5e1" font-size="18">Netron OS önizleme</text>
+    <text x="860" y="340" fill="#cbd5e1" font-size="18">Erken erişim</text>
+  </g>
+</svg>
