@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500">
+  <rect width="1200" height="500" fill="#0b1020"/>
+  <text x="70" y="80" fill="#f8fafc" font-family="Arial, sans-serif" font-size="40" font-weight="700">NETRON LABS PLATFORM GÖRÜNÜMÜ</text>
+  <g stroke="#475569" stroke-width="3">
+    <line x1="600" y1="260" x2="280" y2="190"/>
+    <line x1="600" y1="260" x2="920" y2="190"/>
+    <line x1="600" y1="260" x2="280" y2="380"/>
+    <line x1="600" y1="260" x2="920" y2="380"/>
+  </g>
+  <circle cx="600" cy="260" r="98" fill="#29204a" stroke="#a78bfa" stroke-width="4"/>
+  <text x="600" y="250" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="31" font-weight="700">NETRON</text>
+  <text x="600" y="286" text-anchor="middle" fill="#c4b5fd" font-family="Arial, sans-serif" font-size="19">LABS</text>
+  <g font-family="Arial, sans-serif">
+    <g transform="translate(120 125)">
+      <rect width="320" height="125" rx="18" fill="#151c33" stroke="#334155"/>
+      <text x="25" y="53" fill="#60a5fa" font-size="28" font-weight="700">Netron AI</text>
+      <text x="25" y="91" fill="#cbd5e1" font-size="18">Konuşma ve üretim</text>
+    </g>
+    <g transform="translate(760 125)">
+      <rect width="320" height="125" rx="18" fill="#151c33" stroke="#334155"/>
+      <text x="25" y="53" fill="#c084fc" font-size="28" font-weight="700">ProtonX</text>
+      <text x="25" y="91" fill="#cbd5e1" font-size="18">Model araştırması</text>
+    </g>
+    <g transform="translate(120 315)">
+      <rect width="320" height="125" rx="18" fill="#151c33" stroke="#334155"/>
+      <text x="25" y="53" fill="#2dd4bf" font-size="28" font-weight="700">Nethost</text>
+      <text x="25" y="91" fill="#cbd5e1" font-size="18">Web hizmetleri</text>
+    </g>
+    <g transform="translate(760 315)">
+      <rect width="320" height="125" rx="18" fill="#151c33" stroke="#334155"/>
+      <text x="25" y="53" fill="#fbbf24" font-size="28" font-weight="700">Netron OS</text>
+      <text x="25" y="91" fill="#cbd5e1" font-size="18">Yakında</text>
+    </g>
+  </g>
+</svg>
