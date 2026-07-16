@@ -168,30 +168,21 @@ function dataUriFromBuffer(buffer, contentType = "image/jpeg") {
 }
 
 async function prepareImagePrompt(prompt) {
-  const source = String(prompt || "").trim().slice(0, 1200);
-  const fallback = "Create a high-quality image of exactly this requested subject: " + source
-    + ". Keep it as the clear primary focus. Do not add unrelated landmarks, religious buildings, people, text, logos, or watermarks unless requested.";
-  if (!source || !process.env.GROQ_API_KEY) return fallback;
-  try {
-    const response = await fetch(GROQ_URL, {
-      method: "POST",
-      headers: { Authorization: "Bearer " + process.env.GROQ_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "openai/gpt-oss-20b",
-        temperature: 0.1,
-        max_completion_tokens: 96,
-        messages: [
-          { role: "system", content: "Translate this image request into a concise, precise English prompt for Flux. Preserve the requested subject exactly and put it first. Never substitute the subject or add landmarks, mosques, religious buildings, people, text, logos, or watermarks unless explicitly requested. Return only the English prompt." },
-          { role: "user", content: source }
-        ]
-      })
-    });
-    const payload = response.ok ? await response.json().catch(() => ({})) : {};
-    const translated = String(payload?.choices?.[0]?.message?.content || "").replace(/\s+/g, " ").trim().slice(0, 1400);
-    return translated ? "Create exactly this: " + translated + ". Do not add unrelated objects or text." : fallback;
-  } catch {
-    return fallback;
+  let source = String(prompt || "").trim().slice(0, 1200);
+  const replacements = [
+    ["araba", "car"], ["otomobil", "car"], ["kamyon", "truck"],
+    ["motorsiklet", "motorcycle"], ["bisiklet", "bicycle"], ["harita", "map"],
+    ["kedi", "cat"], ["kopek", "dog"], ["koepek", "dog"], ["ev", "house"],
+    ["dag", "mountain"], ["deniz", "sea"], ["orman", "forest"], ["uzay", "space"]
+  ];
+  for (const [turkish, english] of replacements) {
+    source = source.replace(new RegExp("\\b" + turkish + "\\b", "gi"), english);
   }
+  source = source.replace(/\bbir\s+(car|truck|motorcycle|bicycle|cat|dog|house|map|mountain|sea|forest)\b/gi, "a $1");
+  const requestedReligiousArchitecture = /cami|mosque|kilise|church|tapinak|temple/i.test(source);
+  const exclusions = requestedReligiousArchitecture ? "" : " Do not add mosques, religious buildings, landmarks, people, text, logos, or watermarks unless requested.";
+  return "Create a high-quality image of exactly this requested subject: " + source
+    + ". Keep the requested subject as the clear primary focus. Do not substitute it or add unrelated objects." + exclusions;
 }
 
 async function requestCloudflareImage(body) {
