@@ -167,6 +167,33 @@ function dataUriFromBuffer(buffer, contentType = "image/jpeg") {
   return "data:" + contentType + ";base64," + Buffer.from(buffer).toString("base64");
 }
 
+async function prepareImagePrompt(prompt) {
+  const source = String(prompt || "").trim().slice(0, 1200);
+  const fallback = "Create a high-quality image of exactly this requested subject: " + source
+    + ". Keep it as the clear primary focus. Do not add unrelated landmarks, religious buildings, people, text, logos, or watermarks unless requested.";
+  if (!source || !process.env.GROQ_API_KEY) return fallback;
+  try {
+    const response = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: { Authorization: "Bearer " + process.env.GROQ_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openai/gpt-oss-20b",
+        temperature: 0.1,
+        max_completion_tokens: 96,
+        messages: [
+          { role: "system", content: "Translate this image request into a concise, precise English prompt for Flux. Preserve the requested subject exactly and put it first. Never substitute the subject or add landmarks, mosques, religious buildings, people, text, logos, or watermarks unless explicitly requested. Return only the English prompt." },
+          { role: "user", content: source }
+        ]
+      })
+    });
+    const payload = response.ok ? await response.json().catch(() => ({})) : {};
+    const translated = String(payload?.choices?.[0]?.message?.content || "").replace(/\s+/g, " ").trim().slice(0, 1400);
+    return translated ? "Create exactly this: " + translated + ". Do not add unrelated objects or text." : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function requestCloudflareImage(body) {
   const workerUrl = String(process.env.CLOUDFLARE_IMAGE_WORKER_URL || "").trim();
   const token = String(process.env.CLOUDFLARE_IMAGE_WORKER_TOKEN || "").trim();
@@ -176,7 +203,7 @@ async function requestCloudflareImage(body) {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       body: JSON.stringify({
-        prompt: String(body.prompt || "").trim().slice(0, 1800),
+        prompt: String(body.preparedPrompt || body.prompt || "").trim().slice(0, 1800),
         aspect_ratio: String(body.aspect_ratio || "1:1")
       })
     });
@@ -194,7 +221,7 @@ async function requestCloudflareImage(body) {
 }
 
 async function requestPollinationsImage(body) {
-  const prompt = String(body.prompt || "").trim().slice(0, 1800);
+  const prompt = String(body.preparedPrompt || body.prompt || "").trim().slice(0, 1800);
   if (!prompt) return null;
   const size = imageDimensions(String(body.aspect_ratio || "1:1"));
   const url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt)
@@ -253,6 +280,7 @@ module.exports = async (req, res) => {
   if (req.method === "POST" && path === "/image") {
     const body = req.body || {};
     if (!String(body.prompt || "").trim()) return res.status(400).json({ error: "Gorsel promptu gerekli." });
+    body.preparedPrompt = await prepareImagePrompt(body.prompt);
     const image = await requestCloudflareImage(body) || await requestPollinationsImage(body);
     if (!image) return res.status(503).json({ error: "Gorsel saglayicilari su an yanit vermiyor." });
     return res.status(200).json({ output: image });
