@@ -8,6 +8,14 @@ const MODELS = {
   "netron-2.2-nexus": "openai/gpt-oss-120b"
 };
 
+const COMPLETION_LIMITS = {
+  "netron-1.0": 900,
+  "netron-1.5-qwen-27b": 1100,
+  "netron-2.0-qwen-32b": 1300,
+  "netron-2.1-nexus": 1500,
+  "netron-2.2-nexus": 1800
+};
+
 const requests = new Map();
 
 function setCors(req, res) {
@@ -79,10 +87,16 @@ module.exports = async (req, res) => {
         model,
         messages: [{ role: "system", content: systemPrompt(body.mode) }, ...messages],
         temperature: 0.7,
-        max_completion_tokens: body.model === "netron-2.2-nexus" ? 6144 : 4096
+        max_completion_tokens: COMPLETION_LIMITS[body.model] || COMPLETION_LIMITS["netron-1.0"]
       })
     });
     const payload = await upstream.json().catch(() => ({}));
+    if (upstream.status === 429) {
+      return res.status(429).json({
+        error: "Netron sunucusu kisa sureli yogun. Yaklasik 20 saniye sonra tekrar dene.",
+        retryAfter: 20
+      });
+    }
     if (!upstream.ok) return res.status(upstream.status).json({ error: payload?.error?.message || "Groq istegi basarisiz." });
     const content = payload?.choices?.[0]?.message?.content;
     if (!content) return res.status(502).json({ error: "Yapay zeka metin donmedi." });
