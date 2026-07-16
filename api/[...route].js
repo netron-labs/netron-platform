@@ -31,6 +31,35 @@ const MODEL_ACCESS = {
     "netron-image-xl": "PLUS"
   }
 };
+const MONTHLY_LIMITS = {
+  chat: {
+    FREE: { "netron-1.0": 100 },
+    PLUS: { "netron-1.0": 500, "netron-1.5-qwen-27b": 300 },
+    PRO: { "netron-1.0": 1000, "netron-1.5-qwen-27b": 1000, "netron-2.0-qwen-32b": 700, "netron-2.1-nexus": 700 },
+    EXTREME: { "netron-1.0": 6000, "netron-1.5-qwen-27b": 6000, "netron-2.0-qwen-32b": 2000, "netron-2.1-nexus": 2000, "netron-2.2-nexus": 2000 }
+  },
+  image: {
+    FREE: { "*": 3 },
+    PLUS: { "*": 15 },
+    PRO: { "*": 30 },
+    EXTREME: { "*": 60 }
+  },
+  video: {
+    FREE: { "*": 0 },
+    PLUS: { "*": 0 },
+    PRO: { "*": 0 },
+    EXTREME: { "*": 0 }
+  }
+};
+const USAGE_FIELDS = {
+  "chat:netron-1.0": "usageChatNetron10",
+  "chat:netron-1.5-qwen-27b": "usageChatNetron15",
+  "chat:netron-2.0-qwen-32b": "usageChatNetron20",
+  "chat:netron-2.1-nexus": "usageChatNetron21",
+  "chat:netron-2.2-nexus": "usageChatNetron22",
+  "image:*": "usageImages",
+  "video:*": "usageVideos"
+};
 const FIREBASE_PROJECT = "project-b91d07a8-b6eb-41d2-b6b";
 
 const requests = new Map();
@@ -84,7 +113,7 @@ async function verifiedPlan(req) {
     if (!response.ok) return { ok: false, status: 401, error: "Hesap planın doğrulanamadı. Tekrar giriş yapmayı dene." };
     const document = await response.json().catch(() => null);
     const plan = String(document?.fields?.plan?.stringValue || "FREE").toUpperCase();
-    return { ok: true, plan: PLAN_RANK[plan] === undefined ? "FREE" : plan };
+    return { ok: true, token, uid, document, plan: PLAN_RANK[plan] === undefined ? "FREE" : plan };
   } catch {
     return { ok: false, status: 503, error: "Üyelik doğrulama servisi şu an ulaşılamıyor." };
   }
@@ -96,6 +125,66 @@ async function requireModelAccess(req, type, model) {
   const needed = MODEL_ACCESS[type]?.[model] || "EXTREME";
   if (PLAN_RANK[membership.plan] < PLAN_RANK[needed]) return { ok: false, status: 403, error: `${needed} planı gerekli.` };
   return membership;
+}
+
+function currentUsageMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function firestoreInteger(fields, name) {
+  const value = fields?.[name];
+  return Number(value?.integerValue || value?.stringValue || 0) || 0;
+}
+
+function usageField(type, model) {
+  return USAGE_FIELDS[`${type}:${model}`] || USAGE_FIELDS[`${type}:*`];
+}
+
+function monthlyLimit(plan, type, model) {
+  const limits = MONTHLY_LIMITS[type]?.[plan] || MONTHLY_LIMITS[type]?.FREE || {};
+  return Number(limits[model] ?? limits["*"] ?? 0);
+}
+
+async function consumeMonthlyQuota(membership, type, model) {
+  const field = usageField(type, model);
+  const limit = monthlyLimit(membership.plan, type, model);
+  if (!field || limit <= 0) {
+    return { ok: false, status: 403, error: "Bu ozellik mevcut planinda kapali." };
+  }
+
+  const fields = membership.document?.fields || {};
+  const month = currentUsageMonth();
+  const storedMonth = String(fields.usageMonth?.stringValue || "");
+  const used = storedMonth === month ? firestoreInteger(fields, field) : 0;
+  if (used >= limit) {
+    return { ok: false, status: 429, error: `Aylik limit doldu. ${month} donemi icin ${limit}/${limit} kullanildi.` };
+  }
+
+  try {
+    const endpoint = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/users/${encodeURIComponent(membership.uid)}?updateMask.fieldPaths=usageMonth&updateMask.fieldPaths=${encodeURIComponent(field)}`;
+    const response = await fetch(endpoint, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${membership.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          usageMonth: { stringValue: month },
+          [field]: { integerValue: String(used + 1) }
+        }
+      })
+    });
+    if (!response.ok) return { ok: false, status: 503, error: "Kota sayaci guncellenemedi. Birazdan tekrar dene." };
+    return { ok: true, used: used + 1, limit };
+  } catch {
+    return { ok: false, status: 503, error: "Kota servisine ulasilamadi. Birazdan tekrar dene." };
+  }
+}
+
+async function requireUsageAccess(req, type, model) {
+  const membership = await requireModelAccess(req, type, model);
+  if (!membership.ok) return membership;
+  const quota = await consumeMonthlyQuota(membership, type, model);
+  if (!quota.ok) return quota;
+  return { ...membership, quota };
 }
 
 function systemPrompt(mode) {
@@ -323,7 +412,7 @@ module.exports = async (req, res) => {
   if (req.method === "POST" && path === "/image") {
     const body = req.body || {};
     if (!String(body.prompt || "").trim()) return res.status(400).json({ error: "Gorsel promptu gerekli." });
-    const membership = await requireModelAccess(req, "image", String(body.model || "netron-image-1.0"));
+    const membership = await requireUsageAccess(req, "image", String(body.model || "netron-image-1.0"));
     if (!membership.ok) return res.status(membership.status).json({ error: membership.error });
     body.preparedPrompt = await prepareImagePrompt(body.prompt);
     const image = await requestCloudflareImage(body) || await requestPollinationsImage(body);
@@ -334,7 +423,7 @@ module.exports = async (req, res) => {
   if (req.method !== "POST" || path !== "/chat") return res.status(404).json({ error: "API endpoint bulunamadi." });
 
   const body = req.body || {};
-  const membership = await requireModelAccess(req, "chat", String(body.model || "netron-1.0"));
+  const membership = await requireUsageAccess(req, "chat", String(body.model || "netron-1.0"));
   if (!membership.ok) return res.status(membership.status).json({ error: membership.error });
   const messages = Array.isArray(body.messages) ? body.messages.slice(-24).map((item) => ({
     role: item?.role === "assistant" ? "assistant" : "user",
