@@ -55,53 +55,87 @@ function systemPrompt(mode) {
   return "Sen Netron AI adinda Turkce konusan bir asistansin. " + rule + " Gizli dusunme adimlarini yazma.";
 }
 
+async function requestCerebrasFallback(body, messages) {
+  const key = String(process.env.CEREBRAS_API_KEY || "").trim();
+  if (!key) return null;
+  const fallbackModel = body.model === "netron-1.0" ? "gpt-oss-20b" : "gpt-oss-120b";
+  try {
+    const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: fallbackModel,
+        messages: [{ role: "system", content: systemPrompt(body.mode) }, ...messages],
+        temperature: 0.7,
+        max_completion_tokens: COMPLETION_LIMITS[body.model] || COMPLETION_LIMITS["netron-1.0"]
+      })
+    });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => ({}));
+    const content = payload?.choices?.[0]?.message?.content;
+    return content ? { content, model: fallbackModel } : null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = async (req, res) => {
   if (!setCors(req, res)) return res.status(403).json({ error: "Bu origin icin erisim yok." });
   if (req.method === "OPTIONS") return res.status(204).end();
   if (!allow(req)) return res.status(429).json({ error: "Cok fazla istek gonderildi. Bir dakika sonra tekrar dene." });
 
   const path = route(req);
-  if (req.method === "GET" && path === "/health") return res.status(200).json({ ok: true, service: "netron-node-api" });
+  const hasGroq = Boolean(String(process.env.GROQ_API_KEY || "").trim());
+  const hasCerebras = Boolean(String(process.env.CEREBRAS_API_KEY || "").trim());
+  if (req.method === "GET" && path === "/health") return res.status(200).json({ ok: true, service: "netron-node-api", fallback: hasCerebras ? "cerebras" : null });
   if (req.method === "GET" && path === "/catalog") return res.status(200).json({
-    configured: Boolean(process.env.GROQ_API_KEY),
+    configured: hasGroq || hasCerebras,
     models: { text: Object.entries(MODELS).map(([id, base]) => ({ id, base, label: id })) },
-    services: { text: { configured: Boolean(process.env.GROQ_API_KEY), provider: "groq" } }
+    services: { text: { configured: hasGroq || hasCerebras, provider: hasGroq ? "groq" : "cerebras", fallbackConfigured: hasCerebras } }
   });
   if (req.method !== "POST" || path !== "/chat") return res.status(404).json({ error: "API endpoint bulunamadi." });
 
-  const key = String(process.env.GROQ_API_KEY || "").trim();
-  if (!key) return res.status(503).json({ error: "Netron API henuz yapilandirilmamis." });
   const body = req.body || {};
-  const model = MODELS[body.model] || MODELS["netron-1.0"];
   const messages = Array.isArray(body.messages) ? body.messages.slice(-24).map((item) => ({
     role: item?.role === "assistant" ? "assistant" : "user",
     content: String(item?.content || "").slice(0, 14000)
   })).filter((item) => item.content.trim()) : [];
   if (!messages.length) return res.status(400).json({ error: "Bos mesaj gonderilemez." });
+  if (!hasGroq && !hasCerebras) return res.status(503).json({ error: "Netron API henuz yapilandirilmamis." });
+
+  const fallback = async () => {
+    const result = await requestCerebrasFallback(body, messages);
+    return result ? res.status(200).json({ message: { role: "assistant", content: result.content }, provider: "cerebras", fallback: true }) : null;
+  };
+
+  if (!hasGroq) {
+    const response = await fallback();
+    return response || res.status(503).json({ error: "Yedek Netron sunucusu yanit vermiyor." });
+  }
 
   try {
     const upstream = await fetch(GROQ_URL, {
       method: "POST",
-      headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+      headers: { Authorization: "Bearer " + process.env.GROQ_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model,
+        model: MODELS[body.model] || MODELS["netron-1.0"],
         messages: [{ role: "system", content: systemPrompt(body.mode) }, ...messages],
         temperature: 0.7,
         max_completion_tokens: COMPLETION_LIMITS[body.model] || COMPLETION_LIMITS["netron-1.0"]
       })
     });
     const payload = await upstream.json().catch(() => ({}));
-    if (upstream.status === 429) {
-      return res.status(429).json({
-        error: "Netron sunucusu kisa sureli yogun. Yaklasik 20 saniye sonra tekrar dene.",
-        retryAfter: 20
-      });
+    if (!upstream.ok) {
+      const response = await fallback();
+      if (response) return response;
+      if (upstream.status === 429) return res.status(429).json({ error: "Netron sunucusu kisa sureli yogun. Yaklasik 20 saniye sonra tekrar dene.", retryAfter: 20 });
+      return res.status(upstream.status).json({ error: payload?.error?.message || "Groq istegi basarisiz." });
     }
-    if (!upstream.ok) return res.status(upstream.status).json({ error: payload?.error?.message || "Groq istegi basarisiz." });
     const content = payload?.choices?.[0]?.message?.content;
     if (!content) return res.status(502).json({ error: "Yapay zeka metin donmedi." });
-    return res.status(200).json({ message: { role: "assistant", content } });
+    return res.status(200).json({ message: { role: "assistant", content }, provider: "groq" });
   } catch (error) {
-    return res.status(502).json({ error: String(error.message || "Sunucu hatasi.") });
+    const response = await fallback();
+    return response || res.status(502).json({ error: String(error.message || "Sunucu hatasi.") });
   }
 };
