@@ -84,6 +84,42 @@ function decodeHtml(value) {
   return String(value || "").replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#x27;/g, "'").replace(/&#39;/g, "'").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 }
 
+async function searchReferenceSources(term, limit) {
+  const results = [];
+  const add = (title, url) => {
+    if (title && /^https?:\/\//i.test(url) && !results.some((item) => item.url === url)) results.push({ title, url });
+  };
+  for (const language of ["tr", "en"]) {
+    if (results.length >= limit) break;
+    try {
+      const response = await fetch("https://" + language + ".wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=5&srsearch=" + encodeURIComponent(term), {
+        headers: { "User-Agent": "NetronLabsResearch/1.0 (+https://netron.net.tr)" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      for (const item of payload?.query?.search || []) {
+        add("Wikipedia: " + item.title, "https://" + language + ".wikipedia.org/wiki/" + encodeURIComponent(String(item.title).replace(/ /g, "_")));
+        if (results.length >= limit) break;
+      }
+    } catch {
+      // A single reference provider must not prevent the remaining providers from working.
+    }
+  }
+  if (results.length >= limit) return results.slice(0, limit);
+  try {
+    const response = await fetch("https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&site=stackoverflow&pagesize=5&q=" + encodeURIComponent(term), {
+      headers: { "User-Agent": "NetronLabsResearch/1.0 (+https://netron.net.tr)" }
+    });
+    const payload = await response.json().catch(() => ({}));
+    for (const item of payload?.items || []) {
+      add("Stack Overflow: " + decodeHtml(item.title), String(item.link || ""));
+      if (results.length >= limit) break;
+    }
+  } catch {
+    // Reference search is best-effort and still returns any sources already found.
+  }
+  return results.slice(0, limit);
+}
+
 async function searchWeb(query, limit) {
   const term = String(query || "").trim().slice(0, 280);
   if (!term) return [];
@@ -107,9 +143,9 @@ async function searchWeb(query, limit) {
       const title = decodeHtml(match[2]);
       if (title && !results.some((item) => item.url === url)) results.push({ title, url });
     }
-    return results;
+    return results.length ? results : searchReferenceSources(term, limit);
   } catch {
-    return [];
+    return searchReferenceSources(term, limit);
   }
 }
 
