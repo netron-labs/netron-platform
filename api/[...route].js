@@ -60,6 +60,7 @@ const USAGE_FIELDS = {
   "image:*": "usageImages",
   "video:*": "usageVideos"
 };
+const EARLY_ACCESS_MODELS = new Set(["netron-2.1-nexus", "netron-2.2-nexus"]);
 const FIREBASE_PROJECT = "project-b91d07a8-b6eb-41d2-b6b";
 
 const requests = new Map();
@@ -113,7 +114,10 @@ async function verifiedPlan(req) {
     if (!response.ok) return { ok: false, status: 401, error: "Hesap planın doğrulanamadı. Tekrar giriş yapmayı dene." };
     const document = await response.json().catch(() => null);
     const plan = String(document?.fields?.plan?.stringValue || "FREE").toUpperCase();
-    return { ok: true, token, uid, document, plan: PLAN_RANK[plan] === undefined ? "FREE" : plan };
+    const earlyAccessModels = (document?.fields?.earlyAccessModels?.arrayValue?.values || [])
+      .map((item) => String(item.stringValue || ""))
+      .filter(Boolean);
+    return { ok: true, token, uid, document, earlyAccessModels, plan: PLAN_RANK[plan] === undefined ? "FREE" : plan };
   } catch {
     return { ok: false, status: 503, error: "Üyelik doğrulama servisi şu an ulaşılamıyor." };
   }
@@ -123,6 +127,9 @@ async function requireModelAccess(req, type, model) {
   const membership = await verifiedPlan(req);
   if (!membership.ok) return membership;
   const needed = MODEL_ACCESS[type]?.[model] || "EXTREME";
+  if (type === "chat" && EARLY_ACCESS_MODELS.has(model) && PLAN_RANK[membership.plan] >= PLAN_RANK[needed] && !membership.earlyAccessModels.includes(model)) {
+    return { ok: false, status: 403, error: "Bu beta modeli sadece admin tarafindan erken erisim verilen hesaplarda aciktir." };
+  }
   if (PLAN_RANK[membership.plan] < PLAN_RANK[needed]) return { ok: false, status: 403, error: `${needed} planı gerekli.` };
   return membership;
 }
