@@ -127,7 +127,7 @@ async function searchWeb(query, limit) {
     const response = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(term), {
       headers: { "User-Agent": "NetronLabsResearch/1.0 (+https://netron.net.tr)" }
     });
-    if (!response.ok) return [];
+    if (!response.ok) return searchReferenceSources(term, limit);
     const html = await response.text();
     const results = [];
     const pattern = /<a[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
