@@ -65,7 +65,7 @@ async function requestCerebrasFallback(body, messages) {
       headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: fallbackModel,
-        messages: [{ role: "system", content: systemPrompt(body.mode) }, ...messages],
+        messages: [{ role: "system", content: systemPrompt(body.mode) }, ...preparedMessages],
         temperature: 0.7,
         max_completion_tokens: COMPLETION_LIMITS[body.model] || COMPLETION_LIMITS["netron-1.0"]
       })
@@ -77,6 +77,47 @@ async function requestCerebrasFallback(body, messages) {
   } catch {
     return null;
   }
+}
+
+
+function decodeHtml(value) {
+  return String(value || "").replace(/&amp;/g, "&").replace(/&quot;/g, "\\\"").replace(/&#x27;/g, "'").replace(/&#39;/g, "'").replace(/<[^>]*>/g, "").replace(/\\s+/g, " ").trim();
+}
+
+async function searchWeb(query, limit) {
+  const term = String(query || "").trim().slice(0, 280);
+  if (!term) return [];
+  try {
+    const response = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(term), {
+      headers: { "User-Agent": "NetronLabsResearch/1.0 (+https://netron.net.tr)" }
+    });
+    if (!response.ok) return [];
+    const html = await response.text();
+    const results = [];
+    const pattern = /<a[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\\s\\S]*?)<\\/a>/gi;
+    let match;
+    while ((match = pattern.exec(html)) && results.length < limit) {
+      let url = decodeHtml(match[1]);
+      try {
+        const parsed = new URL(url, "https://duckduckgo.com");
+        url = parsed.searchParams.get("uddg") || parsed.href;
+        url = decodeURIComponent(url);
+      } catch { continue; }
+      if (!/^https?:\\/\\//i.test(url) || /duckduckgo\\.com/i.test(url)) continue;
+      const title = decodeHtml(match[2]);
+      if (title && !results.some((item) => item.url === url)) results.push({ title, url });
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+function researchContext(mode, sources) {
+  if (!sources.length) return "Web kaynagi su an alinamadi. Kaynak varmis gibi davranma.";
+  const list = sources.map((source, index) => "[" + (index + 1) + "] " + source.title + ": " + source.url).join("\\n");
+  const depth = mode === "deep" ? "Karsilastirma, belirsizlikler ve sonuc bolumleriyle ayrintili bir arastirma raporu yaz." : mode === "agent" ? "Arastirma bulgularina dayanarak uygulanabilir plan, riskler ve sonraki adimlari yaz." : "Kaynaklari kisa ve dogru bicimde ozetle.";
+  return depth + " Sadece asagidaki kaynaklara dayan; kullandigin iddialarda [numara] ile atif yap.\\n\\nKAYNAKLAR:\\n" + list;
 }
 
 module.exports = async (req, res) => {
@@ -93,6 +134,10 @@ module.exports = async (req, res) => {
     models: { text: Object.entries(MODELS).map(([id, base]) => ({ id, base, label: id })) },
     services: { text: { configured: hasGroq || hasCerebras, provider: hasGroq ? "groq" : "cerebras", fallbackConfigured: hasCerebras } }
   });
+  if (req.method === "GET" && path === "/search") {
+    const query = String(req.query?.q || "");
+    return res.status(200).json({ query, sources: await searchWeb(query, 8) });
+  }
   if (req.method !== "POST" || path !== "/chat") return res.status(404).json({ error: "API endpoint bulunamadi." });
 
   const body = req.body || {};
@@ -101,11 +146,14 @@ module.exports = async (req, res) => {
     content: String(item?.content || "").slice(0, 14000)
   })).filter((item) => item.content.trim()) : [];
   if (!messages.length) return res.status(400).json({ error: "Bos mesaj gonderilemez." });
+  const researchModes = new Set(["web", "agent", "deep"]);
+  const sources = researchModes.has(body.mode) ? await searchWeb(messages[messages.length - 1]?.content || "", body.mode === "deep" ? 10 : 6) : [];
+  const preparedMessages = sources.length || researchModes.has(body.mode) ? [{ role: "system", content: researchContext(body.mode, sources) }, ...messages] : messages;
   if (!hasGroq && !hasCerebras) return res.status(503).json({ error: "Netron API henuz yapilandirilmamis." });
 
   const fallback = async () => {
-    const result = await requestCerebrasFallback(body, messages);
-    return result ? res.status(200).json({ message: { role: "assistant", content: result.content }, provider: "cerebras", fallback: true }) : null;
+    const result = await requestCerebrasFallback(body, preparedMessages);
+    return result ? res.status(200).json({ message: { role: "assistant", content: result.content }, provider: "cerebras", fallback: true, sources }) : null;
   };
 
   if (!hasGroq) {
@@ -133,7 +181,7 @@ module.exports = async (req, res) => {
     }
     const content = payload?.choices?.[0]?.message?.content;
     if (!content) return res.status(502).json({ error: "Yapay zeka metin donmedi." });
-    return res.status(200).json({ message: { role: "assistant", content }, provider: "groq" });
+    return res.status(200).json({ message: { role: "assistant", content }, provider: "groq", sources });
   } catch (error) {
     const response = await fallback();
     return response || res.status(502).json({ error: String(error.message || "Sunucu hatasi.") });
