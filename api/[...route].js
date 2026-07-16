@@ -156,6 +156,68 @@ function researchContext(mode, sources) {
   return depth + " Sadece asagidaki kaynaklara dayan; kullandigin iddialarda [numara] ile atif yap.\n\nKAYNAKLAR:\n" + list;
 }
 
+
+function imageDimensions(aspectRatio) {
+  if (aspectRatio === "16:9") return { width: 1024, height: 576 };
+  if (aspectRatio === "9:16") return { width: 576, height: 1024 };
+  return { width: 768, height: 768 };
+}
+
+function dataUriFromBuffer(buffer, contentType = "image/jpeg") {
+  return "data:" + contentType + ";base64," + Buffer.from(buffer).toString("base64");
+}
+
+async function requestCloudflareImage(body) {
+  const workerUrl = String(process.env.CLOUDFLARE_IMAGE_WORKER_URL || "").trim();
+  const token = String(process.env.CLOUDFLARE_IMAGE_WORKER_TOKEN || "").trim();
+  if (!workerUrl || !token) return null;
+  try {
+    const response = await fetch(workerUrl, {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: String(body.prompt || "").trim().slice(0, 1800),
+        aspect_ratio: String(body.aspect_ratio || "1:1")
+      })
+    });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    const image = payload?.image || payload?.dataURI;
+    return image ? {
+      image,
+      provider: "cloudflare-workers-ai",
+      model: payload.model || "@cf/black-forest-labs/flux-1-schnell"
+    } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function requestPollinationsImage(body) {
+  const prompt = String(body.prompt || "").trim().slice(0, 1800);
+  if (!prompt) return null;
+  const size = imageDimensions(String(body.aspect_ratio || "1:1"));
+  const url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt)
+    + "?width=" + size.width + "&height=" + size.height + "&nologo=true&seed=" + Math.floor(Math.random() * 2147483647);
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "NetronLabsImage/1.0 (+https://netron.net.tr)" }
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    if (!contentType.startsWith("image/")) return null;
+    const buffer = await response.arrayBuffer();
+    if (!buffer.byteLength) return null;
+    return {
+      image: dataUriFromBuffer(buffer, contentType),
+      provider: "pollinations",
+      model: "pollinations-flux"
+    };
+  } catch {
+    return null;
+  }
+}
+
 module.exports = async (req, res) => {
   if (!setCors(req, res)) return res.status(403).json({ error: "Bu origin icin erisim yok." });
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -174,6 +236,15 @@ module.exports = async (req, res) => {
     const query = String(req.query?.q || "");
     return res.status(200).json({ query, sources: await searchWeb(query, 8) });
   }
+
+  if (req.method === "POST" && path === "/image") {
+    const body = req.body || {};
+    if (!String(body.prompt || "").trim()) return res.status(400).json({ error: "Gorsel promptu gerekli." });
+    const image = await requestCloudflareImage(body) || await requestPollinationsImage(body);
+    if (!image) return res.status(503).json({ error: "Gorsel saglayicilari su an yanit vermiyor." });
+    return res.status(200).json({ output: image });
+  }
+
   if (req.method !== "POST" || path !== "/chat") return res.status(404).json({ error: "API endpoint bulunamadi." });
 
   const body = req.body || {};
