@@ -126,10 +126,13 @@ async function verifiedPlan(req) {
 async function requireModelAccess(req, type, model) {
   const membership = await verifiedPlan(req);
   if (!membership.ok) return membership;
-  const needed = MODEL_ACCESS[type]?.[model] || "EXTREME";
-  if (type === "chat" && EARLY_ACCESS_MODELS.has(model) && PLAN_RANK[membership.plan] >= PLAN_RANK[needed] && !membership.earlyAccessModels.includes(model)) {
-    return { ok: false, status: 403, error: "Bu beta modeli sadece admin tarafindan erken erisim verilen hesaplarda aciktir." };
+  if (type === "chat" && EARLY_ACCESS_MODELS.has(model)) {
+    if (!membership.earlyAccessModels.includes(model)) {
+      return { ok: false, status: 403, error: "Bu beta modeli sadece admin tarafindan erken erisim verilen hesaplarda aciktir." };
+    }
+    return membership;
   }
+  const needed = MODEL_ACCESS[type]?.[model] || "EXTREME";
   if (PLAN_RANK[membership.plan] < PLAN_RANK[needed]) return { ok: false, status: 403, error: `${needed} planı gerekli.` };
   return membership;
 }
@@ -154,7 +157,8 @@ function monthlyLimit(plan, type, model) {
 
 async function consumeMonthlyQuota(membership, type, model) {
   const field = usageField(type, model);
-  const limit = monthlyLimit(membership.plan, type, model);
+  const earlyAccessLimit = type === "chat" && EARLY_ACCESS_MODELS.has(model) && membership.earlyAccessModels.includes(model) ? 200 : 0;
+  const limit = monthlyLimit(membership.plan, type, model) || earlyAccessLimit;
   if (!field || limit <= 0) {
     return { ok: false, status: 403, error: "Bu ozellik mevcut planinda kapali." };
   }
