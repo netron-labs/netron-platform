@@ -226,11 +226,24 @@ module.exports = async (req, res) => {
   const path = route(req);
   const hasGroq = Boolean(String(process.env.GROQ_API_KEY || "").trim());
   const hasCerebras = Boolean(String(process.env.CEREBRAS_API_KEY || "").trim());
-  if (req.method === "GET" && path === "/health") return res.status(200).json({ ok: true, service: "netron-node-api", fallback: hasCerebras ? "cerebras" : null });
+  const hasCloudflareImage = Boolean(String(process.env.CLOUDFLARE_IMAGE_WORKER_URL || "").trim() && String(process.env.CLOUDFLARE_IMAGE_WORKER_TOKEN || "").trim());
+  if (req.method === "GET" && path === "/health") return res.status(200).json({ ok: true, service: "netron-node-api", fallback: hasCerebras ? "cerebras" : null, imageProvider: hasCloudflareImage ? "cloudflare-workers-ai" : "pollinations" });
   if (req.method === "GET" && path === "/catalog") return res.status(200).json({
     configured: hasGroq || hasCerebras,
-    models: { text: Object.entries(MODELS).map(([id, base]) => ({ id, base, label: id })) },
-    services: { text: { configured: hasGroq || hasCerebras, provider: hasGroq ? "groq" : "cerebras", fallbackConfigured: hasCerebras } }
+    models: {
+      text: Object.entries(MODELS).map(([id, base]) => ({ id, base, label: id })),
+      image: [
+        { id: "netron-image-1.0", label: "Netron Image 1.0 - Hızlı", base: "@cf/black-forest-labs/flux-1-schnell" },
+        { id: "netron-image-1.5", label: "Netron Image 1.5 - Kaliteli", base: "@cf/black-forest-labs/flux-1-schnell" },
+        { id: "netron-image-xl", label: "Netron Image XL - Yüksek Kalite", base: "@cf/black-forest-labs/flux-1-schnell" }
+      ],
+      video: []
+    },
+    services: {
+      text: { configured: hasGroq || hasCerebras, provider: hasGroq ? "groq" : "cerebras", fallbackConfigured: hasCerebras },
+      image: { configured: true, provider: hasCloudflareImage ? "cloudflare-workers-ai" : "pollinations", fallbackConfigured: true },
+      video: { configured: false }
+    }
   });
   if (req.method === "GET" && path === "/search") {
     const query = String(req.query?.q || "");
