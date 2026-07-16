@@ -65,7 +65,7 @@ async function requestCerebrasFallback(body, messages) {
       headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: fallbackModel,
-        messages: [{ role: "system", content: systemPrompt(body.mode) }, ...preparedMessages],
+        messages: [{ role: "system", content: systemPrompt(body.mode) }, ...messages],
         temperature: 0.7,
         max_completion_tokens: COMPLETION_LIMITS[body.model] || COMPLETION_LIMITS["netron-1.0"]
       })
@@ -81,7 +81,7 @@ async function requestCerebrasFallback(body, messages) {
 
 
 function decodeHtml(value) {
-  return String(value || "").replace(/&amp;/g, "&").replace(/&quot;/g, "\\\"").replace(/&#x27;/g, "'").replace(/&#39;/g, "'").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  return String(value || "").replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#x27;/g, "'").replace(/&#39;/g, "'").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 }
 
 async function searchWeb(query, limit) {
@@ -167,7 +167,7 @@ module.exports = async (req, res) => {
       headers: { Authorization: "Bearer " + process.env.GROQ_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: MODELS[body.model] || MODELS["netron-1.0"],
-        messages: [{ role: "system", content: systemPrompt(body.mode) }, ...messages],
+        messages: [{ role: "system", content: systemPrompt(body.mode) }, ...preparedMessages],
         temperature: 0.7,
         max_completion_tokens: COMPLETION_LIMITS[body.model] || COMPLETION_LIMITS["netron-1.0"]
       })
