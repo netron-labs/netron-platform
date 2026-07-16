@@ -321,9 +321,10 @@ async function prepareImagePrompt(prompt) {
   }
   source = source.replace(/\bbir\s+(car|truck|motorcycle|bicycle|cat|dog|house|map|mountain|sea|forest)\b/gi, "a $1");
   const requestedReligiousArchitecture = /cami|mosque|kilise|church|tapinak|temple/i.test(source);
-  const exclusions = requestedReligiousArchitecture ? "" : " Do not add mosques, religious buildings, landmarks, people, text, logos, or watermarks unless requested.";
-  return "Create a high-quality image of exactly this requested subject: " + source
-    + ". Keep the requested subject as the clear primary focus. Do not substitute it or add unrelated objects." + exclusions;
+  const exclusions = requestedReligiousArchitecture ? "" : " Negative prompt: mosque, masjid, minaret, dome, religious building, church, temple, monument, palace, unrelated architecture, random person, watermark, text, logo.";
+  return "Image generation task. Draw ONLY the user's requested subject: \"" + source
+    + "\". The main subject must match the request exactly. Do not reinterpret, replace, localize, or add unrelated scenery. "
+    + "If the request is a car, draw a car. If it is a map, draw a map. If it is an object, draw that object only." + exclusions;
 }
 
 async function requestCloudflareImage(body) {
@@ -336,7 +337,8 @@ async function requestCloudflareImage(body) {
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt: String(body.preparedPrompt || body.prompt || "").trim().slice(0, 1800),
-        aspect_ratio: String(body.aspect_ratio || "1:1")
+        aspect_ratio: String(body.aspect_ratio || "1:1"),
+        seed: Math.floor(Math.random() * 2147483647)
       })
     });
     if (!response.ok) return null;
@@ -415,7 +417,7 @@ module.exports = async (req, res) => {
     const membership = await requireUsageAccess(req, "image", String(body.model || "netron-image-1.0"));
     if (!membership.ok) return res.status(membership.status).json({ error: membership.error });
     body.preparedPrompt = await prepareImagePrompt(body.prompt);
-    const image = await requestCloudflareImage(body) || await requestPollinationsImage(body);
+    const image = await requestPollinationsImage(body) || await requestCloudflareImage(body);
     if (!image) return res.status(503).json({ error: "Gorsel saglayicilari su an yanit vermiyor." });
     return res.status(200).json({ output: image });
   }
