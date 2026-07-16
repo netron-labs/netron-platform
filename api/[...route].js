@@ -16,6 +16,23 @@ const COMPLETION_LIMITS = {
   "netron-2.2-nexus": 1800
 };
 
+const PLAN_RANK = { FREE: 0, PLUS: 1, PRO: 2, EXTREME: 3 };
+const MODEL_ACCESS = {
+  chat: {
+    "netron-1.0": "FREE",
+    "netron-1.5-qwen-27b": "PLUS",
+    "netron-2.0-qwen-32b": "PRO",
+    "netron-2.1-nexus": "PRO",
+    "netron-2.2-nexus": "EXTREME"
+  },
+  image: {
+    "netron-image-1.0": "FREE",
+    "netron-image-1.5": "PLUS",
+    "netron-image-xl": "PLUS"
+  }
+};
+const FIREBASE_PROJECT = "project-b91d07a8-b6eb-41d2-b6b";
+
 const requests = new Map();
 
 function setCors(req, res) {
@@ -44,6 +61,41 @@ function route(req) {
   if (typeof parts === "string" && parts) return "/" + parts;
   const pathname = String(req.url || "").split("?")[0];
   return pathname.replace(/^\/api/, "") || "/";
+}
+
+function readJwtPayload(token) {
+  try {
+    const chunk = String(token || "").split(".")[1];
+    if (!chunk) return null;
+    return JSON.parse(Buffer.from(chunk.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function verifiedPlan(req) {
+  const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  const claims = readJwtPayload(token);
+  const uid = String(claims?.user_id || claims?.sub || "").trim();
+  if (!token || !uid) return { ok: false, status: 401, error: "Devam etmek icin Google ile giris yapmalısın." };
+  try {
+    const endpoint = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/users/${encodeURIComponent(uid)}`;
+    const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) return { ok: false, status: 401, error: "Hesap planın doğrulanamadı. Tekrar giriş yapmayı dene." };
+    const document = await response.json().catch(() => null);
+    const plan = String(document?.fields?.plan?.stringValue || "FREE").toUpperCase();
+    return { ok: true, plan: PLAN_RANK[plan] === undefined ? "FREE" : plan };
+  } catch {
+    return { ok: false, status: 503, error: "Üyelik doğrulama servisi şu an ulaşılamıyor." };
+  }
+}
+
+async function requireModelAccess(req, type, model) {
+  const membership = await verifiedPlan(req);
+  if (!membership.ok) return membership;
+  const needed = MODEL_ACCESS[type]?.[model] || "EXTREME";
+  if (PLAN_RANK[membership.plan] < PLAN_RANK[needed]) return { ok: false, status: 403, error: `${needed} planı gerekli.` };
+  return membership;
 }
 
 function systemPrompt(mode) {
@@ -271,6 +323,8 @@ module.exports = async (req, res) => {
   if (req.method === "POST" && path === "/image") {
     const body = req.body || {};
     if (!String(body.prompt || "").trim()) return res.status(400).json({ error: "Gorsel promptu gerekli." });
+    const membership = await requireModelAccess(req, "image", String(body.model || "netron-image-1.0"));
+    if (!membership.ok) return res.status(membership.status).json({ error: membership.error });
     body.preparedPrompt = await prepareImagePrompt(body.prompt);
     const image = await requestCloudflareImage(body) || await requestPollinationsImage(body);
     if (!image) return res.status(503).json({ error: "Gorsel saglayicilari su an yanit vermiyor." });
@@ -280,6 +334,8 @@ module.exports = async (req, res) => {
   if (req.method !== "POST" || path !== "/chat") return res.status(404).json({ error: "API endpoint bulunamadi." });
 
   const body = req.body || {};
+  const membership = await requireModelAccess(req, "chat", String(body.model || "netron-1.0"));
+  if (!membership.ok) return res.status(membership.status).json({ error: membership.error });
   const messages = Array.isArray(body.messages) ? body.messages.slice(-24).map((item) => ({
     role: item?.role === "assistant" ? "assistant" : "user",
     content: String(item?.content || "").slice(0, 14000)
